@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     Copyright (c) 2013 ESRI
+
+     All rights reserved under the copyright laws of the United States
+     and applicable international laws, treaties, and conventions.
+
+     You may freely redistribute and use this sample code, with or
+     without modification, provided you include the original copyright
+     notice and use restrictions.
+
+     See use restrictions in use_restrictions.txt.
+-->
+<!---
+     The default item renderer for the Geocoder results list component.
+     @private
+-->
+<s:ItemRenderer xmlns:fx="http://ns.adobe.com/mxml/2009"
+                xmlns:s="library://ns.adobe.com/flex/spark"
+                xmlns:mx="library://ns.adobe.com/flex/mx"
+                autoDrawBackground="true"
+                dataChange="updateSuggestionLabel()">
+    <s:states>
+        <s:State name="selected"/>
+        <s:State name="normal"/>
+        <s:State name="hovered"/>
+    </s:states>
+
+    <fx:Script>
+        <![CDATA[
+            import com.esri.ags.components.supportClasses.GeocoderSearchResult;
+            import com.esri.ags.skins.supportClasses.GeocoderResultList;
+            import com.esri.ags.tasks.supportClasses.AddressCandidate;
+            import com.esri.ags.tasks.supportClasses.FindResult;
+
+            import mx.utils.StringUtil;
+
+            import flashx.textLayout.conversion.TextConverter;
+
+            private function updateSuggestionLabel():void
+            {
+                if (!data)
+                {
+                    return;
+                }
+
+                const suggestionMatches:RegExp = new RegExp("(" + (owner as GeocoderResultList).searchText + ")", "gi");
+                var suggestionText:String = searchResultToLabel(data as GeocoderSearchResult);
+                suggestionText = suggestionText.replace(suggestionMatches, "<b>$&</b>");
+                suggestionLabel.textFlow = TextConverter.importToFlow(suggestionText, TextConverter.TEXT_FIELD_HTML_FORMAT);
+            }
+
+            private function searchResultToLabel(searchResult:GeocoderSearchResult):String
+            {
+                if (searchResult.data is FindResult)
+                {
+                    var findResult:FindResult = searchResult.data as FindResult
+                    return StringUtil.substitute('{0} - {1} - {2}',
+                                                 findResult.value,
+                                                 findResult.layerName,
+                                                 searchResult.sourceName);
+                }
+                else if (searchResult.data is AddressCandidate)
+                {
+                    return (searchResult.data as AddressCandidate).address as String;
+                }
+                else
+                {
+                    return searchResult.label;
+                }
+            }
+        ]]>
+    </fx:Script>
+
+    <s:RichText id="suggestionLabel"
+                left="3" right="3" top="5" bottom="5"
+                color.hovered="#1F467E"
+                color.normal="#FFFFFF"
+                color.selected="#FFFFFF"/>
+</s:ItemRenderer>

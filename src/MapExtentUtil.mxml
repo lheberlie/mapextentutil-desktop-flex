@@ -1,0 +1,431 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:Application xmlns:fx="http://ns.adobe.com/mxml/2009"
+               xmlns:s="library://ns.adobe.com/flex/spark"
+               xmlns:mx="library://ns.adobe.com/flex/mx"
+               xmlns:esri="http://www.esri.com/2008/ags"
+               creationComplete="application1_creationCompleteHandler(event)"
+               minHeight="700"
+               minWidth="700">
+
+    <s:layout>
+        <s:VerticalLayout paddingLeft="15"
+                          paddingRight="15"
+                          paddingTop="15"/>
+    </s:layout>
+    <fx:Style source="defaults.css"/>
+
+    <fx:Script>
+        <![CDATA[
+            import com.esri.ags.Graphic;
+            import com.esri.ags.SpatialReference;
+            import com.esri.ags.components.supportClasses.GeocoderSearchResult;
+            import com.esri.ags.events.ExtentEvent;
+            import com.esri.ags.events.GeocoderEvent;
+            import com.esri.ags.events.GeometryServiceEvent;
+            import com.esri.ags.events.MapMouseEvent;
+            import com.esri.ags.geometry.Extent;
+            import com.esri.ags.geometry.Geometry;
+            import com.esri.ags.geometry.MapPoint;
+            import com.esri.ags.layers.TiledMapServiceLayer;
+            import com.esri.ags.tasks.supportClasses.ProjectParameters;
+            import com.esri.ags.utils.JSONUtil;
+            import com.esri.ags.utils.WebMercatorUtil;
+
+            import mx.collections.ArrayCollection;
+            import mx.controls.Alert;
+            import mx.events.FlexEvent;
+            import mx.rpc.events.FaultEvent;
+            import mx.rpc.events.ResultEvent;
+            import mx.utils.ArrayUtil;
+            import mx.utils.StringUtil;
+
+            import spark.events.TextOperationEvent;
+
+            private var _coordinateSystemFilterChanged:Boolean = false;
+            private static var idCounter:int = 1;
+
+            [Bindable]
+            private var projectionList:ArrayCollection = new ArrayCollection([]);
+
+            private var extentTemplate:String = '<esri:extent><esri:Extent id="extent{0}" xmin="{1}" ymin="{2}" xmax="{3}" ymax="{4}"><esri:SpatialReference wkid="{5}"/></esri:Extent></esri:extent>';
+            private var projectedExtentTemplate:String = '<esri:extent><esri:Extent id="projectedExtent{0}" xmin="{1}" ymin="{2}" xmax="{3}" ymax="{4}"><esri:SpatialReference wkid="{5}"/></esri:Extent></esri:extent>';
+            private var webMercatorExtentTemplate:String = '<esri:extent><esri:WebMercatorExtent id="webMercatorExtent{0}" minlon="{1}" minlat="{2}" maxlon="{3}" maxlat="{4}"/></esri:extent>';
+            private var labelClassesTemplate:String = ' <esri:LabelClass id="labelClass{0}" minScale="{1}" maxScale="{2}" labelExpression="" labelPlacement=""/>';
+
+            private var viewerInitialExtentTemplate:String = 'initialextent="{0} {1} {2} {3}"';
+
+            private var geographicPointTemplate:String = 'var mapPoint{0}:MapPoint = new MapPoint({1}, {2}, new SpatialReference({3}));';
+            private var webMercatorPointTemplate:String = 'var webMercatorMapPoint{0}:WebMercatorMapPoint = new WebMercatorMapPoint({1}, {2});';
+
+            private var geographicExtentMXML:String;
+            private var webMercatorExtentMXML:String;
+            private var projectedExtentMXML:String;
+            private var labelClassesMXML:String;
+            private var viewerInitialExtent:String;
+            private var mapLocalPoint:String = 'var mapPointDefault:MapPoint = new MapPoint(-13046162.704566656, 4036337.4745851173, new SpatialReference(102100));';
+            private var webMercatorPoint:String = 'var webMercatorMapPointDefault:WebMercatorMapPoint = new WebMercatorMapPoint(-117.19567356622301, 34.056100739242666);';
+            private var _projectedExtent:Extent;
+
+            private var DEC_PLACES:Number = 6;
+
+            // See http://help.arcgis.com/en/arcgisserver/10.0/apis/rest/pcs.html for more projections
+
+            private var mapPoint:MapPoint;
+
+            private var latlong:MapPoint;
+            [Bindable]
+            private var mouseMoveCoords:String = "";
+
+            // when mouse (cursor) is on the map ...
+            private function loadHandler():void
+            {
+                myMap.addEventListener(MapMouseEvent.MAP_CLICK, mouseClickHandler);
+                myMap.addEventListener(MouseEvent.MOUSE_MOVE, mouseMoveHandler);
+                projectNow(myMap.extent);
+            }
+
+            // ... show coordinates of current (mouse) location
+            private function mouseClickHandler(event:MapMouseEvent):void
+            {
+                graphicsLayer.clear();
+                mapPoint = myMap.toMapFromStage(event.stageX, event.stageY);
+                graphicsLayer.add(new Graphic(mapPoint));
+                latlong = WebMercatorUtil.webMercatorToGeographic(mapPoint) as MapPoint;
+                mousecoords.text = 'x="' + mapPoint.x.toFixed(0) + '" y="' + mapPoint.y.toFixed(0) + '"' + ' lat="' + latlong.y.toFixed(6) + '" lon="' + latlong.x.toFixed(6) + '"';
+                mapLocalPoint = StringUtil.substitute(geographicPointTemplate, [ idCounter, mapPoint.x, mapPoint.y, mapPoint.spatialReference.wkid ]);
+                webMercatorPoint = StringUtil.substitute(webMercatorPointTemplate, [ idCounter, latlong.x, latlong.y ]);
+            }
+
+            private function mouseMoveHandler(event:MouseEvent):void
+            {
+                const mapPoint:MapPoint = myMap.toMapFromStage(event.stageX, event.stageY);
+                const latlong:MapPoint = WebMercatorUtil.webMercatorToGeographic(mapPoint) as MapPoint;
+                mouseMoveCoords = 'x="' + mapPoint.x.toFixed(0) + '" y="' + mapPoint.y.toFixed(0) + '"' + " and Lat/Long is: " + latlong.y.toFixed(6) + " / " + latlong.x.toFixed(6);
+            }
+
+            private function projectNow(extent:Extent = null):void
+            {
+                var outSR:SpatialReference;
+                if (wkid.selectedItem)
+                {
+                    var selectedItem:Object = wkid.selectedItem;
+                    if (selectedItem.hasOwnProperty('definition'))
+                    {
+                        outSR = new SpatialReference(NaN, selectedItem['definition']);
+                    }
+                    else if (selectedItem.hasOwnProperty('id'))
+                    {
+                        outSR = new SpatialReference(parseInt(selectedItem['id']));
+                    }
+                }
+                if (outSR == null)
+                {
+                    outSR = new SpatialReference(102004);
+                }
+                var params:ProjectParameters = new ProjectParameters();
+                if (extent)
+                {
+                    params.geometries = [ extent as Geometry ];
+                }
+                else
+                {
+                    params.geometries = [ myMap.extent as Geometry ];
+                }
+                params.outSpatialReference = outSR;
+                // Note: GeometryService takes in geometries instead of graphics as input
+                geometryService.project(params);
+
+            }
+
+            private function projectCompleteHandler(event:GeometryServiceEvent):void
+            {
+                try
+                {
+                    // Note: As of version 2.0, GeometryService returns geometries (instead of graphics)
+                    _projectedExtent = (event.result as Array)[0] as Extent;
+                    calculateExtents();
+                }
+                catch (error:Error)
+                {
+                    Alert.show(error.toString());
+                }
+            }
+
+            private function projectCompleteFaultHandler(info:Object, token:Object = null):void
+            {
+                Alert.show(info.toString());
+            }
+
+            protected function myMap_extentChangeHandler(event:ExtentEvent):void
+            {
+                projectNow(event.extent);
+            }
+
+            protected function esriService_faultHandler(event:FaultEvent):void
+            {
+                Alert.show("Error: " + event.fault.faultString, "Error code: " + event.fault.faultCode);
+                currentState = 'default';
+            }
+
+            private function layerShowHandler(event:FlexEvent):void
+            {
+                // update the LODs/zoomslider to use/show the levels for the selected base map
+                var tiledLayer:TiledMapServiceLayer = event.target as TiledMapServiceLayer;
+                myMap.lods = tiledLayer.tileInfo.lods;
+            }
+
+            private function calculateExtents():void
+            {
+                var geogExtent:Extent = WebMercatorUtil.webMercatorToGeographic(myMap.extent) as Extent;
+
+                geographicExtentMXML = StringUtil.substitute(extentTemplate, templateExtentArray(geogExtent));
+                webMercatorExtentMXML = StringUtil.substitute(webMercatorExtentTemplate, templateExtentArray(geogExtent));
+                projectedExtentMXML = StringUtil.substitute(projectedExtentTemplate, templateExtentArray(_projectedExtent));
+                labelClassesMXML = StringUtil.substitute(labelClassesTemplate, [ idCounter, myMap.scale.toFixed(0), myMap.scale.toFixed(0)]);
+                viewerInitialExtent = StringUtil.substitute(viewerInitialExtentTemplate, [ myMap.extent.xmin.toFixed(9), myMap.extent.ymin.toFixed(9), myMap.extent.xmax.toFixed(9), myMap.extent.ymax.toFixed(9)]);
+                idCounter++;
+            }
+
+            private function templateExtentArray(value:Extent):Array
+            {
+                var templateArray:Array = []
+                if (value)
+                {
+                    templateArray = [ idCounter, value.xmin.toFixed(DEC_PLACES), value.ymin.toFixed(DEC_PLACES), value.xmax.toFixed(DEC_PLACES), value.ymax.toFixed(6), value.spatialReference.wkid ];
+                }
+                return templateArray;
+            }
+
+            private function copyTextToClipBoard(value:String):void
+            {
+                System.setClipboard(value);
+            }
+
+            protected function geocoder_resultSelectedHandler(event:GeocoderEvent):void
+            {
+                if (event.result)
+                {
+                    var geocodeResult:GeocoderSearchResult = event.result as GeocoderSearchResult;
+                }
+            }
+
+            protected function application1_creationCompleteHandler(event:FlexEvent):void
+            {
+                geocoder.setFocus()
+                service.send();
+            }
+
+            protected function service_resultHandler(event:ResultEvent):void
+            {
+                var data:String = event.result as String;
+                //label: description, id: wkid
+                var jsonData:Array = ArrayUtil.toArray(JSONUtil.decode(data));
+                projectionList = new ArrayCollection(jsonData);
+                wkid.dataProvider = projectionList;
+            }
+
+            protected function service_faultHandler(event:FaultEvent):void
+            {
+                Alert.show("An error occured while loading the coordinate systems", "Coordinate System Error");
+            }
+
+            protected function wkidDataProviderLabelFunction(item:Object):String
+            {
+                if (item.hasOwnProperty('description'))
+                {
+                    return item['description'];
+                }
+                else
+                {
+                    return "";
+                }
+            }
+
+            protected function projectionFilter_changeHandler(event:TextOperationEvent):void
+            {
+                _coordinateSystemFilterChanged = true;
+                projectionList.filterFunction = projectionListFilterFunction;
+                projectionList.refresh();
+            }
+
+            private function projectionListFilterFunction(item:Object):Boolean
+            {
+                var searchString:String = projectionFilter.text.toLocaleLowerCase();
+                var itemName:String = (item.description as String).toLocaleLowerCase();
+                return itemName.indexOf(searchString) > 1;
+            }
+
+            protected function projectionFilter_focusInHandler(event:FocusEvent):void
+            {
+                if (_coordinateSystemFilterChanged)
+                {
+                    projectionFilter.text = "";
+                    projectionList.filterFunction = null;
+                    projectionList.refresh();
+                    _coordinateSystemFilterChanged = false;
+                }
+            }
+        ]]>
+    </fx:Script>
+
+    <fx:Declarations>
+        <s:HTTPService id="service"
+                       fault="service_faultHandler(event)"
+                       result="service_resultHandler(event)"
+                       url="assets/json/coord_sys_json.json"/>
+        <esri:GeometryService id="geometryService"
+                              concurrency="last"
+                              fault="projectCompleteFaultHandler(event)"
+                              projectComplete="projectCompleteHandler(event)"
+                              url="https://utility.arcgisonline.com/arcgis/rest/services/Geometry/GeometryServer"/>
+        <s:NumberFormatter id="numberFormatter"
+                           decimalSeparator=","
+                           fractionalDigits="0"/>
+    </fx:Declarations>
+
+    <s:HGroup width="100%" verticalAlign="middle">
+        <s:Label fontWeight="bold"
+                 styleName="textColor"
+                 text="Projection:"/>
+        <s:DropDownList id="wkid"
+                        width="400"
+                        change="projectNow(myMap.extent)"
+                        labelFunction="wkidDataProviderLabelFunction"
+                        prompt="Select a Coordinate System"/>
+        <s:TextInput id="projectionFilter"
+                     width="100%"
+                     change="projectionFilter_changeHandler(event)"
+                     focusIn="projectionFilter_focusInHandler(event)"
+                     prompt="Filter by name.."/>
+    </s:HGroup>
+    <s:HGroup width="90%" verticalAlign="middle">
+        <s:RichText fontWeight="bold"
+                    styleName="textColor"
+                    text="Clipboard: "/>
+        <s:TileGroup requestedRowCount="2">
+
+            <s:Button buttonMode="true"
+                      click="copyTextToClipBoard(geographicExtentMXML)"
+                      label="Geographic Extent"/>
+            <s:Button buttonMode="true"
+                      click="copyTextToClipBoard(webMercatorExtentMXML)"
+                      label="WebMercator Extent"/>
+            <s:Button buttonMode="true"
+                      click="copyTextToClipBoard(projectedExtentMXML)"
+                      label="Projected Extent"/>
+            <s:Button buttonMode="true"
+                      click="copyTextToClipBoard(viewerInitialExtent)"
+                      label="Viewer Initial Extent"/>
+            <s:Button buttonMode="true"
+                      click="copyTextToClipBoard(labelClassesMXML)"
+                      label="Label Classes"/>
+            <s:Button buttonMode="true"
+                      click="copyTextToClipBoard(mapLocalPoint + '\n' + webMercatorPoint)"
+                      label="Click Location"/>
+        </s:TileGroup>
+
+    </s:HGroup>
+    <s:Line width="100%">
+        <s:stroke>
+            <s:SolidColorStroke color="0x1F467E"/>
+        </s:stroke>
+    </s:Line>
+    <s:HGroup gap="10">
+        <s:Label fontWeight="bold"
+                 styleName="textColor"
+                 text="Map scale:"/>
+        <s:RichEditableText editable="false"
+                            styleName="textColor"
+                            text="1:{numberFormatter.format(myMap.scale)} (level {myMap.level})"/>
+    </s:HGroup>
+    <s:HGroup gap="10">
+        <s:Label fontWeight="bold"
+                 styleName="textColor"
+                 text="Click location:"/>
+        <s:RichEditableText id="mousecoords"
+                            click="mousecoords.selectAll();copyTextToClipBoard(mousecoords.text)"
+                            editable="false"
+                            styleName="textColor"
+                            text="Click the map to see its current coordinates..."/>
+    </s:HGroup>
+    <s:Line width="100%">
+        <s:stroke>
+            <s:SolidColorStroke color="0x1F467E"/>
+        </s:stroke>
+    </s:Line>
+
+    <s:Group width="100%" height="100%">
+
+        <esri:Map id="myMap"
+                  doubleClickZoomEnabled="true"
+                  extentChange="myMap_extentChangeHandler(event)"
+                  load="loadHandler()"
+                  wrapAround180="true">
+            <esri:extent>
+                <esri:Extent xmin="-18958434" ymin="-5539767" xmax="7262524" ymax="13558484">
+                    <esri:SpatialReference wkid="102100"/>
+                </esri:Extent>
+            </esri:extent>
+            <esri:ArcGISTiledMapServiceLayer show="layerShowHandler(event)"
+                                             url="http://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer"
+                                             visible="{bb.selectedIndex == 0}"/>
+            <esri:ArcGISTiledMapServiceLayer show="layerShowHandler(event)"
+                                             url="http://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer"
+                                             visible="{bb.selectedIndex == 1}"/>
+            <esri:ArcGISTiledMapServiceLayer show="layerShowHandler(event)"
+                                             url="http://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer"
+                                             visible="{bb.selectedIndex == 2}"/>
+            <esri:ArcGISTiledMapServiceLayer show="layerShowHandler(event)"
+                                             url="http://server.arcgisonline.com/ArcGIS/rest/services/Ocean_Basemap/MapServer"
+                                             visible="{bb.selectedIndex == 3}"/>
+            <esri:ArcGISTiledMapServiceLayer show="layerShowHandler(event)"
+                                             url="http://server.arcgisonline.com/ArcGIS/rest/services/NatGeo_World_Map/MapServer"
+                                             visible="{bb.selectedIndex == 4}"/>
+            <esri:GraphicsLayer id="graphicsLayer">
+                <esri:symbol>
+                    <esri:CompositeSymbol>
+                        <esri:symbols>
+                            <esri:SimpleMarkerSymbol alpha="0.9"
+                                                     color="0x1F467E"
+                                                     size="16"/>
+                            <esri:SimpleMarkerSymbol alpha="0.5"
+                                                     color="0x295DA6"
+                                                     size="12">
+                                <esri:outline>
+                                    <esri:SimpleLineSymbol color="0xFFFFFF"/>
+                                </esri:outline>
+                            </esri:SimpleMarkerSymbol>
+                            <esri:SimpleMarkerSymbol alpha="0.5"
+                                                     color="0x295DA6"
+                                                     size="10">
+                                <esri:outline>
+                                    <esri:SimpleLineSymbol color="0xFFFFFF"/>
+                                </esri:outline>
+                            </esri:SimpleMarkerSymbol>
+                        </esri:symbols>
+                    </esri:CompositeSymbol>
+                </esri:symbol>
+            </esri:GraphicsLayer>
+        </esri:Map>
+        <s:ButtonBar id="bb"
+                     right="28" bottom="55"
+                     requireSelection="true">
+            <s:dataProvider>
+                <s:ArrayList>
+                    <fx:String>Street</fx:String>
+                    <fx:String>Topo</fx:String>
+                    <fx:String>Photo</fx:String>
+                    <fx:String>Ocean</fx:String>
+                    <fx:String>NatGeo</fx:String>
+                </s:ArrayList>
+            </s:dataProvider>
+        </s:ButtonBar>
+        <esri:Geocoder id="geocoder"
+                       width="300"
+                       right="20" top="20"
+                       fault="esriService_faultHandler(event)"
+                       map="{myMap}"
+                       resultSelected="geocoder_resultSelectedHandler(event)"/>
+    </s:Group>
+
+</s:Application>

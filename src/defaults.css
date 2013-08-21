@@ -1,0 +1,96 @@
+/*
+///////////////////////////////////////////////////////////////////////////
+// Copyright (c) 2010-2013 Esri. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+///////////////////////////////////////////////////////////////////////////
+*/
+/* CSS file */
+@namespace s "library://ns.adobe.com/flex/spark";
+@namespace mx "library://ns.adobe.com/flex/mx";
+@namespace esri "http://www.esri.com/2008/ags";
+@namespace spark "spark.skins.spark.*";
+
+s|Application
+{
+    skinClass:ClassReference("skins.MapExtentUtilSkin");   
+    fontSize: 14;
+    color: #4C4C4C;
+}
+
+.textColor
+{
+    color: #1F467E;
+}
+
+esri|Navigation
+{
+	skinClass:ClassReference("skins.BlueNavigationSkin")
+}
+
+esri|Attribution
+{
+    color: #1F467E;
+}
+
+esri|Geocoder
+{
+    skinClass : ClassReference("skins.GeocoderSkin");
+    contentBackgroundColor: #1F467E;
+    contentBackgroundAlpha: 0.9;
+}
+
+esri|ScaleBar
+{
+    skinClass:ClassReference("skins.BlueScaleBarSkin");   
+}
+
+s|TextInput
+{
+    skinClass:ClassReference("skins.BlueTextInputSkin");
+    contentBackgroundColor: #1F467E;
+    contentBackgroundAlpha: 0.8;
+}
+
+s|Button
+{
+    skinClass:ClassReference("skins.BlueButtonSkin");
+    color: #FFFFFF;
+}
+
+s|DropDownList
+{
+    skinClass:ClassReference("skins.BlueDropDownListSkin");
+    contentBackgroundColor: #1F467E;
+}
+
+spark|DefaultItemRenderer
+{
+    color: #FFFFFF;
+    rollOverColor: #1F467E;
+}
+
+s|VScrollBar
+{
+    skinClass:ClassReference("skins.BlueVScollBarSkin");
+}
+
+s|HScrollBar
+{
+    skinClass:ClassReference("skins.BlueHScrollBarSkin");
+}
+
+s|ButtonBar
+{
+    skinClass:ClassReference("skins.BlueButtonBarSkin");
+}
